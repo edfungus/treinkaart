@@ -7,6 +7,7 @@
     "test": "jest",
     "test:watch": "jest --watch",
     "dev": "python -m http.server",
+    "commit": "yarn visualbp && git add script.min.js && git commit",
     "visual": "NODE_ENV=development esbuild script.ts --bundle --outfile=script.js --format=iife --watch",
     "visualb": "NODE_ENV=development esbuild script.ts --bundle --outfile=script.js --format=iife",
     "visualbp": "esbuild script.ts --bundle --outfile=script.min.js --format=iife --minify"
