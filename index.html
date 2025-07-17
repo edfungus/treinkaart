@@ -1,0 +1,300 @@
+<!DOCTYPE html>
+<html lang="en">
+
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>Realtime Transit by A Better Ride</title>
+  <link rel="icon" type="image/x-icon" href="/icon.png">
+  <link href="https://unpkg.com/maplibre-gl@3.6.2/dist/maplibre-gl.css" rel="stylesheet">
+  <script src="https://unpkg.com/maplibre-gl@3.6.2/dist/maplibre-gl.js"></script>
+  <script type="module" src="https://unpkg.com/ionicons@7.1.0/dist/ionicons/ionicons.esm.js"></script>
+  <script nomodule src="https://unpkg.com/ionicons@7.1.0/dist/ionicons/ionicons.js"></script>
+  <link rel="preconnect" href="https://fonts.googleapis.com">
+  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+  <link href="https://fonts.googleapis.com/css2?family=Atkinson+Hyperlegible:ital,wght@0,400;0,700;1,400;1,700&display=swap" rel="stylesheet">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no">
+
+  <style>
+    html,
+    body {
+      height: 100%;
+      margin: 0;
+      padding: 0;
+      font-family: "Atkinson Hyperlegible", sans-serif;
+      font-weight: 400;
+      font-style: normal;
+      box-sizing: border-box;
+    }
+
+    *,
+    *:before,
+    *:after {
+      box-sizing: inherit;
+    }
+
+    #map {
+      height: 100vh;
+      width: 100vw;
+    }
+
+    .maplibregl-ctrl.maplibregl-ctrl-attrib {
+      border-radius: 5px;
+      margin: 5px;
+      background-color: white;
+      opacity: .75;
+    }
+
+    .vehicle-icon {
+      display: flex;
+      flex-direction: row;
+      align-items: center;
+      justify-content: center;
+      padding: 2px 4px;
+      border-radius: 5px;
+      font-size: 12px;
+      white-space: nowrap;
+      cursor: pointer;
+      transform-origin: center;
+      will-change: transform;
+      backface-visibility: hidden;
+      transform: translate3d(0, 0, 0);
+    }
+
+    #info {
+      position: fixed;
+      top: 0px;
+      left: 0px;
+      margin: 20px;
+      border-radius: 10px;
+      padding: 16px;
+      z-index: 1000;
+      width: calc(100% - 40px);
+      max-width: 450px;
+      font-size: 14px;
+      display: flex;
+      flex-direction: column;
+      gap: .5em;
+      box-sizing: border-box;
+    }
+
+    #info.is-loading {
+      animation: fade-in-out 2s ease-in-out infinite;
+    }
+
+    #info:not(.is-loading) {
+      background-color: rgba(255, 255, 255, 1);
+    }
+
+    @keyframes fade-in-out {
+      0% {
+        background-color: rgba(255, 255, 255, 1);
+      }
+
+      50% {
+        background-color: rgba(0, 0, 0, 0.1);
+      }
+
+      100% {
+        background-color: rgba(255, 255, 255, 1);
+      }
+    }
+
+    #info #details {
+      font-size: 14px;
+    }
+
+    #toggle-icon {
+      position: absolute;
+      top: 10px;
+      right: 10px;
+      cursor: pointer;
+      font-size: 16px;
+      color: #666;
+      transition: color 0.2s ease;
+    }
+
+    #toggle-icon:hover {
+      color: #333;
+    }
+
+    #info .head {
+      gap: .5em;
+    }
+
+    #info .head .header {
+      font-family: "Atkinson Hyperlegible", sans-serif;
+      font-weight: 700;
+      color: #333;
+      font-size: 28px;
+    }
+
+    #info .head .sub-header {
+      font-family: "Atkinson Hyperlegible", sans-serif;
+      font-weight: 400;
+      color: #666;
+      font-size: 16px;
+    }
+
+    #info .options {
+      display: flex;
+      flex-direction: row;
+      gap: 10px;
+      margin: 0px;
+    }
+
+    #info .options a {
+      font-size: 16px;
+    }
+
+    #info .more {
+      display: flex;
+      flex-direction: column;
+      gap: .5em;
+    }
+
+    /* hide more if schedule-content has data */
+    #schedule-content:has(*)~#details {
+      display: none;
+    }
+
+    #schedule-content {
+      margin-top: 5px;
+    }
+
+    #schedule-content .card {
+      padding: 10px;
+      border-radius: 10px;
+      background-color: rgba(0, 0, 0, .05);
+      display: flex;
+      flex-direction: row;
+      justify-content: space-between;
+    }
+
+    #schedule-content:empty {
+      display: none;
+    }
+
+    #schedule-content .card .badge {
+      font-size: 18px;
+      font-weight: 700;
+      padding: 5px;
+      border-radius: 5px;
+      height: fit-content;
+      display: flex;
+      align-items: center;
+    }
+
+    #schedule-content .card .badge .text {
+      text-overflow: ellipsis;
+      white-space: nowrap;
+      overflow: hidden;
+      max-width: 150px;
+    }
+
+    #schedule-content .card .info {
+      align-content: flex-end;
+      align-items: flex-end;
+      flex-wrap: 'wrap';
+      flex-shrink: 1;
+    }
+
+    #schedule-content .card .info .line {
+      text-align: right;
+      text-overflow: ellipsis;
+    }
+
+    #schedule-content .card .info .headsign {
+      font-size: 18px;
+    }
+
+    #schedule-content .card .info .long-name {
+      font-size: 16px;
+      opacity: .5;
+    }
+
+    #schedule-content .card .info .operator {
+      font-size: 14px;
+      opacity: .5;
+    }
+
+    #app {
+      position: fixed;
+      bottom: 20px;
+      left: 20px;
+      background: rgba(255, 255, 255, 0.95);
+      border-radius: 10px;
+      padding: 8px;
+      z-index: 1000;
+      max-width: 100%;
+      font-size: 14px;
+      display: flex;
+      flex-direction: row;
+      gap: 1em;
+      transition: opacity 1s ease, transform 1s ease;
+    }
+
+    #app .app-link {
+      height: 48px;
+      align-self: center;
+    }
+
+    #app img.app-icon {
+      border-radius: 10px;
+    }
+
+    #app .info {
+      display: none;
+      flex-direction: column;
+      gap: .25em;
+    }
+
+    #app .info .icons {
+      display: flex;
+      flex-direction: row;
+      gap: .5em;
+    }
+
+    #app .info .title {
+      font-size: 16px;
+    }
+  </style>
+</head>
+
+<body>
+  <div id="map"></div>
+  <div id="info" class="is-loading">
+    <div class="head">
+      <div class="header">Realtime Transit</div>
+      <div class="sub-header">See transit move in realtime</div>
+    </div>
+    <div class="options">
+      <a href="#BAYAREA">Bay Area</a>
+      <a href="#NYC">NYC</a>
+      <a href="#SF">SF</a>
+    </div>
+    <div class="more">
+      <div id="schedule-content"></div>
+      <div id="details">Click on a vehicle to view route information. Not all vehicles have location data (i.e. BART)</div>
+    </div>
+  </div>
+  <div id="app">
+    <a class="app-link" href="https://abetterride.app/" target="_blank">
+      <img class="app-icon" src="icon.png" width="48" height="48">
+    </a>
+    <div class="info">
+      <div class="title"><b>Get the app</b> for realtime transit departures, transfer timings and more</div>
+      <div class="icons">
+        <a href="https://apps.apple.com/us/app/a-better-ride/id6456313380" target="_blank">
+          <img style="display: block;object-fit: contain;" src="/download-apple.png" alt="download from app store" height="24px">
+        </a>
+        <a href="https://groups.google.com/g/abetterrideandroidbeta" target="_blank">
+          <img style="display: block;object-fit: contain;" src="/download-android.png" alt="download from app store" height="24px">
+        </a>
+      </div>
+    </div>
+  </div>
+  <script src="script.js"></script>
+</body>
+
+</html>
