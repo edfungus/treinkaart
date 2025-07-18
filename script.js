@@ -20917,7 +20917,9 @@ ${n2.shaderPreludeCode.vertexSource}`, define: n2.shaderDefine }, defaultProject
       if (!this.userActive) {
         return;
       }
-      document.getElementById("info")?.classList.add("is-loading");
+      if (replaceAndFetchOld) {
+        document.getElementById("info")?.classList.add("is-loading");
+      }
       try {
         const res = await fetch(api + "/visualMap", {
           method: "POST",

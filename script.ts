@@ -241,7 +241,9 @@ class MapApplication {
             return;
         }
 
-        document.getElementById("info")?.classList.add("is-loading");
+        if (replaceAndFetchOld) {
+            document.getElementById("info")?.classList.add("is-loading");
+        }
 
         try {
             // Hi! Don't be scraping please, use 511.org's data directly. It's free!
