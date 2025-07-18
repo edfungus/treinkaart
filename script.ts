@@ -123,10 +123,10 @@ const NYC: place = {
     name: "NYC"
 };
 
-const USA: place = {
+const INITIAL: place = {
     center: [-98.47252196050131, 38.934262001940496],
     zoom: 5,
-    name: "USA" // not a real name, USA is just for initial map location
+    name: "SF" // the initial place to load
 };
 
 class MapApplication {
@@ -137,7 +137,7 @@ class MapApplication {
     private selectedSchedule: VisualVehicleResponse | undefined = undefined;
     private routeArrows: maplibregl.Marker[] = [];
 
-    private place: place = USA;
+    private place: place = INITIAL;
     private map: maplibregl.Map;
 
     private userActive: boolean = true;
