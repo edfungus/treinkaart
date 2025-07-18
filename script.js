@@ -20754,7 +20754,7 @@ ${n2.shaderPreludeCode.vertexSource}`, define: n2.shaderDefine }, defaultProject
 
   // script.ts
   var import_maplibre_gl = __toESM(require_maplibre_gl(), 1);
-  var api = "http://api.abetterride.app/tk";
+  var api = "http://192.168.1.90:3000/tk";
   var MarkerAnimator = class {
     startTime = 0;
     startLngLat = [0, 0];
@@ -20802,26 +20802,23 @@ ${n2.shaderPreludeCode.vertexSource}`, define: n2.shaderDefine }, defaultProject
     }
   };
   var SF = {
-    center: [-122.43332887350739, 37.7665252509697],
-    zoom: 12,
+    bounds: [-122.52029963580877, 37.68658394262969, -122.35025196167224, 37.84102725060082],
     name: "SF"
   };
   var BAYAREA = {
-    center: [-122.26666379640395, 37.65959600564773],
-    zoom: 10,
+    bounds: [-122.84352034686925, 37.08373205652416, -121.75069624477283, 38.327527024650955],
     name: "BAYAREA"
   };
   var NYC = {
-    center: [-73.96204603887533, 40.76983974255722],
-    zoom: 10,
+    bounds: [-74.26803942379149, 40.47627944944273, -73.67194423307133, 40.92845361364066],
     name: "NYC"
   };
   var USA = {
-    center: [-98.47252196050131, 38.934262001940496],
-    zoom: 5,
+    bounds: [-124.96810199077181, 23.2289508370128, -67.03748524080812, 49.72964690322696],
     name: "USA"
-    // not a real name, USA is just for initial map location
+    // not a place, just empty middle of USA
   };
+  var defaultPlace = SF;
   var MapApplication = class {
     markers = {};
     animators = {};
@@ -20859,8 +20856,7 @@ ${n2.shaderPreludeCode.vertexSource}`, define: n2.shaderDefine }, defaultProject
             }
           ]
         },
-        center: this.place.center,
-        zoom: this.place.zoom,
+        bounds: this.place.bounds,
         attributionControl: {
           compact: false
         }
@@ -20889,24 +20885,28 @@ ${n2.shaderPreludeCode.vertexSource}`, define: n2.shaderDefine }, defaultProject
         }
       });
       this.map.on("load", () => {
-        this.fetchAndUpdate(true);
+        if (this.place == USA) {
+          window.location.hash = "#" + defaultPlace.name;
+        } else {
+          this.fetchAndUpdate(true);
+        }
         setInterval(() => this.fetchAndUpdate(false), 6e4);
       });
     }
     setPlace() {
       switch (window.location.hash) {
         case "#SF":
-          this.map.flyTo({ center: SF.center, zoom: SF.zoom, duration: 2500, essential: true });
+          this.map.fitBounds(SF.bounds, { duration: 2500, essential: true });
           this.place = SF;
           this.fetchAndUpdate(true);
           return true;
         case "#BAYAREA":
-          this.map.flyTo({ center: BAYAREA.center, zoom: BAYAREA.zoom, duration: 2500, essential: true });
+          this.map.fitBounds(BAYAREA.bounds, { duration: 2500, essential: true });
           this.place = BAYAREA;
           this.fetchAndUpdate(true);
           return true;
         case "#NYC":
-          this.map.flyTo({ center: NYC.center, zoom: NYC.zoom, duration: 2500, essential: true });
+          this.map.fitBounds(NYC.bounds, { duration: 2500, essential: true });
           this.place = NYC;
           this.fetchAndUpdate(true);
           return true;
