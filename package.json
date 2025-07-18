@@ -6,7 +6,7 @@
     "tsc": "tsc",
     "test": "jest",
     "test:watch": "jest --watch",
-    "build": "rm -rf docs && yarn min && cp index.html docs/index.html && sed -i '' 's/script.js/script.min.js/g' docs/index.html && cp *.png docs/ && cp CNAME docs/CNAME",
+    "build": "rm -rf docs && NODE_ENV=production yarn min && cp index.html docs/index.html && sed -i '' 's/script.js/script.min.js/g' docs/index.html && cp *.png docs/ && cp CNAME docs/CNAME",
     "dev": "python -m http.server",
     "watch": "NODE_ENV=development esbuild script.ts --bundle --outfile=script.js --format=iife --watch",
     "min": "esbuild script.ts --bundle --outfile=docs/script.min.js --format=iife --minify"

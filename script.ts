@@ -1,8 +1,7 @@
 // Import MapLibre GL JS
 import maplibregl from 'maplibre-gl';
 
-const api = "http://192.168.1.90:3000/tk"
-// const api = "https://api.abetterride.app/tk"
+const api = `${process.env.NODE_ENV == "production" ? "https://api.abetterride.app/tk" : "http://192.168.1.90:3000/tk"}`
 
 // Types for the vehicle data
 interface Vehicle {

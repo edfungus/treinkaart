@@ -20754,7 +20754,7 @@ ${n2.shaderPreludeCode.vertexSource}`, define: n2.shaderDefine }, defaultProject
 
   // script.ts
   var import_maplibre_gl = __toESM(require_maplibre_gl(), 1);
-  var api = "http://192.168.1.90:3000/tk";
+  var api = `${false ? "https://api.abetterride.app/tk" : "http://192.168.1.90:3000/tk"}`;
   var MarkerAnimator = class {
     startTime = 0;
     startLngLat = [0, 0];
