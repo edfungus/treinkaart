@@ -169,7 +169,7 @@ class MapApplication {
             },
             bounds: this.place.bounds,
             attributionControl: {
-                compact: false,
+                compact: true,
             }
         });
 

@@ -20858,7 +20858,7 @@ ${n2.shaderPreludeCode.vertexSource}`, define: n2.shaderDefine }, defaultProject
         },
         bounds: this.place.bounds,
         attributionControl: {
-          compact: false
+          compact: true
         }
       });
       this.map.on("click", (e) => {
