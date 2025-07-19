@@ -20821,7 +20821,6 @@ ${n2.shaderPreludeCode.vertexSource}`, define: n2.shaderDefine }, defaultProject
   var defaultPlace = SF;
   var MapApplication = class {
     markers = {};
-    animators = {};
     selectedVehicle = void 0;
     routeLayerId = null;
     selectedSchedule = void 0;
@@ -20893,6 +20892,45 @@ ${n2.shaderPreludeCode.vertexSource}`, define: n2.shaderDefine }, defaultProject
         setInterval(() => this.fetchAndUpdate(false), 6e4);
       });
     }
+    // Calculate bearing between two points in degrees
+    calculateBearing(from, to) {
+      const [lng1, lat1] = from;
+      const [lng2, lat2] = to;
+      const dLng = (lng2 - lng1) * Math.PI / 180;
+      const lat1Rad = lat1 * Math.PI / 180;
+      const lat2Rad = lat2 * Math.PI / 180;
+      const y = Math.sin(dLng) * Math.cos(lat2Rad);
+      const x = Math.cos(lat1Rad) * Math.sin(lat2Rad) - Math.sin(lat1Rad) * Math.cos(lat2Rad) * Math.cos(dLng);
+      const bearing = Math.atan2(y, x) * 180 / Math.PI;
+      return (bearing + 360) % 360;
+    }
+    // Create or update bearing arrow
+    updateBearingArrow(parentElement, bearing, textColor = "000000") {
+      let arrow = parentElement.querySelector('ion-icon[name="arrow-up-circle-outline"]');
+      if (bearing !== void 0) {
+        if (arrow) {
+          arrow.style.transform = `rotate(${bearing}deg)`;
+          arrow.style.color = `#${textColor}`;
+        } else {
+          arrow = document.createElement("ion-icon");
+          arrow.setAttribute("name", "arrow-up-circle-outline");
+          arrow.style.cssText = `
+                    display: inline-block;
+                    width: 14px;
+                    height: 14px;
+                    flex-shrink: 0;
+                    transform: rotate(${bearing}deg);
+                    margin-left: 4px;
+                    color: #${textColor};
+                `;
+          parentElement.appendChild(arrow);
+        }
+      } else {
+        if (arrow) {
+          arrow.remove();
+        }
+      }
+    }
     setPlace() {
       switch (window.location.hash) {
         case "#SF":
@@ -20957,12 +20995,9 @@ ${n2.shaderPreludeCode.vertexSource}`, define: n2.shaderDefine }, defaultProject
       }
     }
     clearMarkers() {
-      Object.values(this.markers).forEach((m) => {
-        m.marker.remove();
-        if (this.animators[this.key(m.vehicle)]) {
-          this.animators[this.key(m.vehicle)].stop();
-          delete this.animators[this.key(m.vehicle)];
-        }
+      Object.values(this.markers).forEach((markerData) => {
+        markerData.marker.remove();
+        markerData.animator.stop();
       });
       this.markers = {};
     }
@@ -20973,30 +21008,52 @@ ${n2.shaderPreludeCode.vertexSource}`, define: n2.shaderDefine }, defaultProject
       const incomingVehicles = /* @__PURE__ */ new Set();
       vehicles.forEach((vehicle) => {
         if (!vehicle.location) return;
-        incomingVehicles.add(this.key(vehicle));
+        const vehicleKey = this.key(vehicle);
+        incomingVehicles.add(vehicleKey);
         const newPos = [vehicle.location.lng, vehicle.location.lat];
-        if (this.markers[this.key(vehicle)]) {
-          const markerData = this.markers[this.key(vehicle)];
-          const animator = this.animators[this.key(vehicle)];
-          if (animator) {
-            animator.slideTo(newPos, 6e4);
+        if (this.markers[vehicleKey]) {
+          const markerData = this.markers[vehicleKey];
+          const currentPos = markerData.marker.getLngLat().toArray();
+          if (markerData.lastPosition) {
+            const bearing = this.calculateBearing(markerData.lastPosition, newPos);
+            markerData.bearing = bearing;
           }
           markerData.vehicle = vehicle;
+          markerData.lastPosition = currentPos;
+          markerData.animator.slideTo(newPos, 6e4);
+          this.updateMarkerElement(markerData);
         } else {
           this.createMarker(vehicle, newPos);
         }
       });
       Object.keys(this.markers).forEach((id) => {
         if (!incomingVehicles.has(id)) {
-          this.markers[id].marker.remove();
-          if (this.animators[id]) {
-            this.animators[id].stop();
-            delete this.animators[id];
-          }
+          const markerData = this.markers[id];
+          markerData.marker.remove();
+          markerData.animator.stop();
           delete this.markers[id];
         }
       });
       this.lastUpdatedAt = /* @__PURE__ */ new Date();
+    }
+    updateMarkerElement(markerData) {
+      const el = markerData.marker.getElement();
+      if (!el) return;
+      const vehicle = markerData.vehicle;
+      el.style.background = `#${vehicle.route_color}`;
+      el.style.color = `#${vehicle.text_color}`;
+      const routeText = el.querySelector("span");
+      if (routeText) {
+        routeText.textContent = vehicle.route_short_name;
+      }
+      this.updateBearingArrow(el, markerData.bearing, vehicle.text_color);
+      if (this.selectedVehicle && this.key(vehicle) === this.key(this.selectedVehicle)) {
+        this.selectedVehicle = vehicle;
+        const selectedMarkerData = this.markers[this.key(vehicle)];
+        if (selectedMarkerData) {
+          this.updateScheduleDisplay(selectedMarkerData.bearing);
+        }
+      }
     }
     createMarker(vehicle, position) {
       const el = document.createElement("div");
@@ -21010,22 +21067,14 @@ ${n2.shaderPreludeCode.vertexSource}`, define: n2.shaderDefine }, defaultProject
       const routeText = document.createElement("span");
       routeText.textContent = vehicle.route_short_name;
       el.appendChild(routeText);
-      if (vehicle.bearing) {
-        const arrow = document.createElement("ion-icon");
-        arrow.setAttribute("name", "arrow-up-circle-outline");
-        arrow.style.cssText = `
-                display: inline-block;
-                width: 14px;
-                height: 14px;
-                flex-shrink: 0;
-                transform: rotate(${vehicle.bearing}deg);
-                margin-left: 4px;
-            `;
-        el.appendChild(arrow);
-      }
       const marker = new import_maplibre_gl.default.Marker({ element: el }).setLngLat(position).addTo(this.map);
       const animator = new MarkerAnimator(marker);
-      this.animators[this.key(vehicle)] = animator;
+      const markerData = {
+        marker,
+        vehicle,
+        animator,
+        lastPosition: position
+      };
       el.addEventListener("click", async (e) => {
         e.stopPropagation();
         if (this.selectedVehicle) {
@@ -21053,21 +21102,18 @@ ${n2.shaderPreludeCode.vertexSource}`, define: n2.shaderDefine }, defaultProject
                 headers: Object.fromEntries(res.headers.entries()),
                 body: errorText
               });
-              throw new Error(`HTTP ${res.status}: ${res.statusText}`);
+              throw new Error(`HTTP ${res.status}: ${res.status}`);
             }
             const data = await res.json();
             this.selectedSchedule = data;
-            this.updateScheduleDisplay();
+            this.updateScheduleDisplay(markerData.bearing);
             this.drawRouteShape(vehicle.route_color, data.shape);
           } catch (err) {
             console.error("Fetch shape error", err);
           }
         }
       });
-      this.markers[this.key(vehicle)] = {
-        marker,
-        vehicle
-      };
+      this.markers[this.key(vehicle)] = markerData;
       if (this.selectedVehicle) {
         if (vehicle.headsign !== this.selectedVehicle.headsign || vehicle.route_short_name !== this.selectedVehicle.route_short_name) {
           el.style.display = "none";
@@ -21136,13 +21182,15 @@ ${n2.shaderPreludeCode.vertexSource}`, define: n2.shaderDefine }, defaultProject
       for (let i = 0; i < shape.length - 1; i++) {
         const segmentDistance = this.calculateDistance(shape[i], shape[i + 1]);
         if (totalDistance >= arrowSpacing) {
-          const bearing = this.calculateBearing(shape[i], shape[i + 1]);
+          const bearing = this.calculateBearing(
+            [shape[i].lng, shape[i].lat],
+            [shape[i + 1].lng, shape[i + 1].lat]
+          );
           const arrowEl = document.createElement("div");
           arrowEl.innerHTML = `<div style="transform: rotate(${bearing - 90}deg); opacity: .8;">\u279C</div>`;
           arrowEl.style.cssText = `
                     color: #${route_color};
                     font-size: 16px;
-                    transform: rotate(${bearing}deg);
                     pointer-events: none;
                 `;
           const arrowMarker = new import_maplibre_gl.default.Marker({ element: arrowEl }).setLngLat([shape[i].lng, shape[i].lat]).addTo(this.map);
@@ -21160,20 +21208,16 @@ ${n2.shaderPreludeCode.vertexSource}`, define: n2.shaderDefine }, defaultProject
       const a = Math.sin(dLat / 2) * Math.sin(dLat / 2) + Math.cos(coord1.lat * Math.PI / 180) * Math.cos(coord2.lat * Math.PI / 180) * Math.sin(dLon / 2) * Math.sin(dLon / 2);
       return R * 2 * Math.atan2(Math.sqrt(a), Math.sqrt(1 - a));
     }
-    calculateBearing(start, end) {
-      const dLng = end.lng - start.lng;
-      const dLat = end.lat - start.lat;
-      return Math.atan2(dLng, dLat) * 180 / Math.PI;
-    }
-    updateScheduleDisplay() {
+    updateScheduleDisplay(bearing) {
       const scheduleContent = document.getElementById("schedule-content");
       if (scheduleContent) {
         if (this.selectedSchedule && this.selectedVehicle) {
+          const bearingArrow = bearing !== void 0 ? `<ion-icon name="arrow-up-circle-outline" style="display: inline-block; width: 18px; height: 18px; flex-shrink: 0; transform: rotate(${bearing}deg); margin-left: 4px; color:#${this.selectedVehicle.text_color};"></ion-icon>` : "";
           scheduleContent.innerHTML = `
                     <div class="card">
                         <div class="badge" style="background-color:#${this.selectedVehicle.route_color};">
                             <div class="text" style="color:#${this.selectedVehicle.text_color};">${this.selectedVehicle.route_short_name}</div>
-                            ${this.selectedVehicle.bearing ? `<ion-icon name="arrow-up-circle-outline" style="display: inline-block; width: 18px; height: 18px; flex-shrink: 0; transform: rotate(${this.selectedVehicle.bearing}deg); margin-left: 4px; color:#${this.selectedVehicle.text_color};"></ion-icon>` : ""}
+                            ${bearingArrow}
                         </div>
                         <div class="info">
                             <div class="headsign line">${this.selectedVehicle.headsign}</div>
@@ -21226,6 +21270,19 @@ ${n2.shaderPreludeCode.vertexSource}`, define: n2.shaderDefine }, defaultProject
       } else {
         toggleIcon.setAttribute("name", "expand-outline");
         isExpanded = true;
+      }
+    });
+  });
+  document.addEventListener("DOMContentLoaded", async () => {
+    let wakeLock = void 0;
+    wakeLock = await navigator.wakeLock.request("screen");
+    document.addEventListener("visibilitychange", async () => {
+      if (document.visibilityState === "visible") {
+        wakeLock = await navigator.wakeLock.request("screen");
+      }
+      if (wakeLock && document.visibilityState === "hidden") {
+        await wakeLock.release();
+        wakeLock = void 0;
       }
     });
   });

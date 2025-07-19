@@ -16,7 +16,6 @@ interface Vehicle {
     route_short_name: string;
     route_long_name: string;
     headsign: string;
-    bearing?: number;
 }
 
 interface VisualMapResponse {
@@ -30,10 +29,12 @@ interface VisualVehicleResponse {
     route_type: string;
 }
 
-interface marker {
+interface MarkerData {
     marker: maplibregl.Marker;
     vehicle: Vehicle;
-    animationId?: number;
+    animator: MarkerAnimator;
+    lastPosition?: [number, number];
+    bearing?: number;
 }
 
 // Simple animation helper for smooth marker movement
@@ -127,8 +128,7 @@ const USA: place = {
 const defaultPlace = SF
 
 class MapApplication {
-    private markers: Record<string, marker> = {};
-    private animators: Record<string, MarkerAnimator> = {};
+    private markers: Record<string, MarkerData> = {};
     private selectedVehicle: Vehicle | undefined = undefined;
     private routeLayerId: string | null = null;
     private selectedSchedule: VisualVehicleResponse | undefined = undefined;
@@ -215,6 +215,55 @@ class MapApplication {
         });
     }
 
+    // Calculate bearing between two points in degrees
+    private calculateBearing(from: [number, number], to: [number, number]): number {
+        const [lng1, lat1] = from;
+        const [lng2, lat2] = to;
+
+        const dLng = (lng2 - lng1) * Math.PI / 180;
+        const lat1Rad = lat1 * Math.PI / 180;
+        const lat2Rad = lat2 * Math.PI / 180;
+
+        const y = Math.sin(dLng) * Math.cos(lat2Rad);
+        const x = Math.cos(lat1Rad) * Math.sin(lat2Rad) -
+            Math.sin(lat1Rad) * Math.cos(lat2Rad) * Math.cos(dLng);
+
+        const bearing = Math.atan2(y, x) * 180 / Math.PI;
+        return (bearing + 360) % 360; // Normalize to 0-360
+    }
+
+    // Create or update bearing arrow
+    private updateBearingArrow(parentElement: HTMLElement, bearing?: number, textColor: string = '000000'): void {
+        let arrow = parentElement.querySelector('ion-icon[name="arrow-up-circle-outline"]') as HTMLElement;
+
+        if (bearing !== undefined) {
+            if (arrow) {
+                // Update existing arrow
+                arrow.style.transform = `rotate(${bearing}deg)`;
+                arrow.style.color = `#${textColor}`;
+            } else {
+                // Add new arrow
+                arrow = document.createElement('ion-icon');
+                arrow.setAttribute('name', 'arrow-up-circle-outline');
+                arrow.style.cssText = `
+                    display: inline-block;
+                    width: 14px;
+                    height: 14px;
+                    flex-shrink: 0;
+                    transform: rotate(${bearing}deg);
+                    margin-left: 4px;
+                    color: #${textColor};
+                `;
+                parentElement.appendChild(arrow);
+            }
+        } else {
+            // Remove arrow if bearing is not available
+            if (arrow) {
+                arrow.remove();
+            }
+        }
+    }
+
     private setPlace(): boolean {
         switch (window.location.hash) {
             case "#SF":
@@ -289,12 +338,9 @@ class MapApplication {
     }
 
     private clearMarkers(): void {
-        Object.values(this.markers).forEach(m => {
-            m.marker.remove();
-            if (this.animators[this.key(m.vehicle)]) {
-                this.animators[this.key(m.vehicle)].stop();
-                delete this.animators[this.key(m.vehicle)];
-            }
+        Object.values(this.markers).forEach(markerData => {
+            markerData.marker.remove();
+            markerData.animator.stop();
         });
         this.markers = {};
     }
@@ -309,17 +355,27 @@ class MapApplication {
         vehicles.forEach(vehicle => {
             if (!vehicle.location) return;
 
-            incomingVehicles.add(this.key(vehicle));
+            const vehicleKey = this.key(vehicle);
+            incomingVehicles.add(vehicleKey);
             const newPos: [number, number] = [vehicle.location.lng, vehicle.location.lat];
 
-            if (this.markers[this.key(vehicle)]) {
-                const markerData = this.markers[this.key(vehicle)];
-                const animator = this.animators[this.key(vehicle)];
-                if (animator) {
-                    animator.slideTo(newPos, 60000);
+            if (this.markers[vehicleKey]) {
+                const markerData = this.markers[vehicleKey];
+                const currentPos = markerData.marker.getLngLat().toArray() as [number, number];
+
+                // Calculate bearing from movement if we have a previous position
+                if (markerData.lastPosition) {
+                    const bearing = this.calculateBearing(markerData.lastPosition, newPos);
+                    markerData.bearing = bearing;
                 }
-                // Update vehicle data
+
+                // Update vehicle data and animate to new position
                 markerData.vehicle = vehicle;
+                markerData.lastPosition = currentPos;
+                markerData.animator.slideTo(newPos, 60000);
+
+                // Update marker appearance
+                this.updateMarkerElement(markerData);
             } else {
                 this.createMarker(vehicle, newPos);
             }
@@ -328,15 +384,43 @@ class MapApplication {
         // Remove markers for vehicles no longer present
         Object.keys(this.markers).forEach(id => {
             if (!incomingVehicles.has(id)) {
-                this.markers[id].marker.remove();
-                if (this.animators[id]) {
-                    this.animators[id].stop();
-                    delete this.animators[id];
-                }
+                const markerData = this.markers[id];
+                markerData.marker.remove();
+                markerData.animator.stop();
                 delete this.markers[id];
             }
         });
         this.lastUpdatedAt = new Date();
+    }
+
+    private updateMarkerElement(markerData: MarkerData): void {
+        const el = markerData.marker.getElement();
+        if (!el) return;
+
+        const vehicle = markerData.vehicle;
+
+        // Update colors
+        el.style.background = `#${vehicle.route_color}`;
+        el.style.color = `#${vehicle.text_color}`;
+
+        // Update route name
+        const routeText = el.querySelector('span');
+        if (routeText) {
+            routeText.textContent = vehicle.route_short_name;
+        }
+
+        // Update bearing arrow
+        this.updateBearingArrow(el, markerData.bearing, vehicle.text_color);
+
+        // Update schedule display if this is the selected vehicle
+        if (this.selectedVehicle && this.key(vehicle) === this.key(this.selectedVehicle)) {
+            this.selectedVehicle = vehicle;
+            // Update the bearing for the selected vehicle display
+            const selectedMarkerData = this.markers[this.key(vehicle)];
+            if (selectedMarkerData) {
+                this.updateScheduleDisplay(selectedMarkerData.bearing);
+            }
+        }
     }
 
     private createMarker(vehicle: Vehicle, position: [number, number]): void {
@@ -355,28 +439,19 @@ class MapApplication {
         routeText.textContent = vehicle.route_short_name;
         el.appendChild(routeText);
 
-        // Add bearing arrow if available
-        if (vehicle.bearing) {
-            const arrow = document.createElement('ion-icon');
-            arrow.setAttribute('name', 'arrow-up-circle-outline');
-            arrow.style.cssText = `
-                display: inline-block;
-                width: 14px;
-                height: 14px;
-                flex-shrink: 0;
-                transform: rotate(${vehicle.bearing}deg);
-                margin-left: 4px;
-            `;
-            el.appendChild(arrow);
-        }
-
         const marker = new maplibregl.Marker({ element: el })
             .setLngLat(position)
             .addTo(this.map);
 
         // Create animator for this marker
         const animator = new MarkerAnimator(marker);
-        this.animators[this.key(vehicle)] = animator;
+
+        const markerData: MarkerData = {
+            marker: marker,
+            vehicle: vehicle,
+            animator: animator,
+            lastPosition: position
+        };
 
         // Add click event
         el.addEventListener('click', async (e) => {
@@ -411,12 +486,12 @@ class MapApplication {
                             body: errorText
                         });
 
-                        throw new Error(`HTTP ${res.status}: ${res.statusText}`);
+                        throw new Error(`HTTP ${res.status}: ${res.status}`);
                     }
 
                     const data: VisualVehicleResponse = await res.json();
                     this.selectedSchedule = data;
-                    this.updateScheduleDisplay();
+                    this.updateScheduleDisplay(markerData.bearing);
                     this.drawRouteShape(vehicle.route_color, data.shape);
                 } catch (err) {
                     console.error('Fetch shape error', err);
@@ -424,10 +499,7 @@ class MapApplication {
             }
         });
 
-        this.markers[this.key(vehicle)] = {
-            marker: marker,
-            vehicle: vehicle,
-        };
+        this.markers[this.key(vehicle)] = markerData;
 
         // If there is a marker selected, don't display (should be after adding it to map)
         if (this.selectedVehicle) {
@@ -515,14 +587,16 @@ class MapApplication {
             const segmentDistance = this.calculateDistance(shape[i], shape[i + 1]);
 
             if (totalDistance >= arrowSpacing) {
-                const bearing = this.calculateBearing(shape[i], shape[i + 1]);
+                const bearing = this.calculateBearing(
+                    [shape[i].lng, shape[i].lat],
+                    [shape[i + 1].lng, shape[i + 1].lat]
+                );
 
                 const arrowEl = document.createElement('div');
                 arrowEl.innerHTML = `<div style="transform: rotate(${bearing - 90}deg); opacity: .8;">➜</div>`;
                 arrowEl.style.cssText = `
                     color: #${route_color};
                     font-size: 16px;
-                    transform: rotate(${bearing}deg);
                     pointer-events: none;
                 `;
 
@@ -549,22 +623,20 @@ class MapApplication {
         return R * 2 * Math.atan2(Math.sqrt(a), Math.sqrt(1 - a));
     }
 
-    private calculateBearing(start: { lat: number; lng: number }, end: { lat: number; lng: number }): number {
-        const dLng = end.lng - start.lng;
-        const dLat = end.lat - start.lat;
-        return Math.atan2(dLng, dLat) * 180 / Math.PI;
-    }
-
-    private updateScheduleDisplay(): void {
+    private updateScheduleDisplay(bearing?: number): void {
         const scheduleContent = document.getElementById('schedule-content');
 
         if (scheduleContent) {
             if (this.selectedSchedule && this.selectedVehicle) {
+                const bearingArrow = bearing !== undefined ?
+                    `<ion-icon name="arrow-up-circle-outline" style="display: inline-block; width: 18px; height: 18px; flex-shrink: 0; transform: rotate(${bearing}deg); margin-left: 4px; color:#${this.selectedVehicle.text_color};"></ion-icon>` :
+                    '';
+
                 scheduleContent.innerHTML = `
                     <div class="card">
                         <div class="badge" style="background-color:#${this.selectedVehicle.route_color};">
                             <div class="text" style="color:#${this.selectedVehicle.text_color};">${this.selectedVehicle.route_short_name}</div>
-                            ${this.selectedVehicle.bearing ? `<ion-icon name="arrow-up-circle-outline" style="display: inline-block; width: 18px; height: 18px; flex-shrink: 0; transform: rotate(${this.selectedVehicle.bearing}deg); margin-left: 4px; color:#${this.selectedVehicle.text_color};"></ion-icon>` : ""}
+                            ${bearingArrow}
                         </div>
                         <div class="info">
                             <div class="headsign line">${this.selectedVehicle.headsign}</div>
@@ -633,6 +705,22 @@ document.addEventListener('DOMContentLoaded', () => {
         } else {
             toggleIcon.setAttribute('name', 'expand-outline');
             isExpanded = true;
+        }
+    });
+});
+
+// Prevent screen from sleeping
+document.addEventListener('DOMContentLoaded', async () => {
+    let wakeLock: WakeLockSentinel | undefined = undefined;
+    wakeLock = await navigator.wakeLock.request('screen');
+
+    document.addEventListener('visibilitychange', async () => {
+        if (document.visibilityState === 'visible') {
+            wakeLock = await navigator.wakeLock.request('screen');
+        }
+        if (wakeLock && document.visibilityState === 'hidden') {
+            await wakeLock.release()
+            wakeLock = undefined
         }
     });
 });
