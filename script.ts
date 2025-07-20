@@ -844,6 +844,8 @@ class MapApplication {
             return;
         }
 
+        this.hideSomeMarkers(vehicle.headsign, vehicle.route_short_name);
+
         try {
             const res = await fetch(api + '/visualVehicle', {
                 method: 'POST',
@@ -877,7 +879,6 @@ class MapApplication {
             console.error('Fetch shape error', err);
         }
 
-        this.hideSomeMarkers(vehicle.headsign, vehicle.route_short_name);
         this.selectedVehicle = vehicle;
         const markerData = this.markers[this.key(vehicle)];
         this.updateScheduleDisplay(markerData?.bearing);
