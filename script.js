@@ -21379,7 +21379,9 @@ ${n2.shaderPreludeCode.vertexSource}`, define: n2.shaderDefine }, defaultProject
         this.showAllMarkers();
         return;
       }
-      this.hideSomeMarkers(vehicle.headsign, vehicle.route_short_name);
+      if (!this.isAutoPlaying) {
+        this.hideSomeMarkers(vehicle.headsign, vehicle.route_short_name);
+      }
       try {
         const res = await fetch(api + "/visualVehicle", {
           method: "POST",
@@ -21408,6 +21410,7 @@ ${n2.shaderPreludeCode.vertexSource}`, define: n2.shaderDefine }, defaultProject
       } catch (err) {
         console.error("Fetch shape error", err);
       }
+      this.hideSomeMarkers(vehicle.headsign, vehicle.route_short_name);
       this.selectedVehicle = vehicle;
       const markerData = this.markers[this.key(vehicle)];
       this.updateScheduleDisplay(markerData?.bearing);
