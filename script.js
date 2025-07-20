@@ -20819,6 +20819,15 @@ ${n2.shaderPreludeCode.vertexSource}`, define: n2.shaderDefine }, defaultProject
     // not a place, just empty middle of USA
   };
   var defaultPlace = SF;
+  var autoPlayDurations = ["10s", "1m", "10m"];
+  function durationToMs(duration) {
+    if (duration.endsWith("s")) {
+      return parseInt(duration) * 1e3;
+    } else if (duration.endsWith("m")) {
+      return parseInt(duration) * 60 * 1e3;
+    }
+    return 0;
+  }
   var MapApplication = class {
     markers = {};
     selectedVehicle = void 0;
@@ -20826,9 +20835,15 @@ ${n2.shaderPreludeCode.vertexSource}`, define: n2.shaderDefine }, defaultProject
     selectedSchedule = void 0;
     routeArrows = [];
     place = USA;
+    useDevMode = void 0;
     map;
     userActive = true;
     lastUpdatedAt = void 0;
+    // Auto-play functionality
+    isAutoPlaying = false;
+    autoPlayTimer = null;
+    autoPlayIndex = 0;
+    autoPlayDuration = 10 * 1e3;
     constructor(mapElementId) {
       this.map = new import_maplibre_gl.default.Map({
         container: mapElementId,
@@ -20861,11 +20876,23 @@ ${n2.shaderPreludeCode.vertexSource}`, define: n2.shaderDefine }, defaultProject
         }
       });
       this.map.on("click", (e) => {
-        this.showAllMarkers();
+        if (!this.isAutoPlaying) {
+          this.showAllMarkers();
+        }
       });
       document.addEventListener("keydown", (e) => {
         if (e.key === "Escape") {
+          this.stopAutoPlay();
           this.showAllMarkers();
+        }
+        if (e.key === "d") {
+          console.log("dev mode is on");
+          this.useDevMode = true;
+        }
+        if (e.key === "ArrowRight" || e.key === " ") {
+          if (this.isAutoPlaying) {
+            this.selectNextVehicle();
+          }
         }
       });
       this.setPlace();
@@ -20884,6 +20911,11 @@ ${n2.shaderPreludeCode.vertexSource}`, define: n2.shaderDefine }, defaultProject
         }
       });
       this.map.on("load", () => {
+        const devMode = window.location.search.includes("?dev");
+        if (devMode) {
+          console.log("dev mode is on");
+          this.useDevMode = true;
+        }
         if (this.place == USA) {
           window.location.hash = "#" + defaultPlace.name;
         } else {
@@ -20891,6 +20923,7 @@ ${n2.shaderPreludeCode.vertexSource}`, define: n2.shaderDefine }, defaultProject
         }
         setInterval(() => this.fetchAndUpdate(false), 6e4);
       });
+      this.setupAutoPlayControls();
     }
     // Calculate bearing between two points in degrees
     calculateBearing(from, to) {
@@ -20932,36 +20965,43 @@ ${n2.shaderPreludeCode.vertexSource}`, define: n2.shaderDefine }, defaultProject
       }
     }
     setPlace() {
+      let found = false;
       switch (window.location.hash) {
         case "#SF":
           this.map.fitBounds(SF.bounds, { duration: 2500, essential: true });
           this.place = SF;
-          this.fetchAndUpdate(true);
-          return true;
+          found = true;
+          break;
         case "#BAYAREA":
           this.map.fitBounds(BAYAREA.bounds, { duration: 2500, essential: true });
           this.place = BAYAREA;
           this.fetchAndUpdate(true);
-          return true;
+          found = true;
+          break;
         case "#NYC":
           this.map.fitBounds(NYC.bounds, { duration: 2500, essential: true });
           this.place = NYC;
           this.fetchAndUpdate(true);
-          return true;
+          found = true;
+          break;
       }
-      return false;
+      this.stopAutoPlay();
+      this.clearSelectedVehicle();
+      this.clearMarkers();
+      this.fetchAndUpdate(true);
+      return found;
     }
     async fetchAndUpdate(replaceAndFetchOld) {
       if (!this.userActive) {
         return;
       }
       if (replaceAndFetchOld) {
-        document.getElementById("info")?.classList.add("is-loading");
+        document.getElementById("loading")?.classList.remove("hidden");
       }
       try {
         const res = await fetch(api + "/visualMap", {
           method: "POST",
-          headers: { "Content-Type": "application/json" },
+          headers: { "Content-Type": "application/json", "use-dev-mode": this.useDevMode ? "hi" : "" },
           body: JSON.stringify({ place: this.place.name, include_old: replaceAndFetchOld })
         });
         if (!res.ok) {
@@ -20986,10 +21026,9 @@ ${n2.shaderPreludeCode.vertexSource}`, define: n2.shaderDefine }, defaultProject
         }
         if (replaceAndFetchOld) {
           this.updateVehicles(data.old_vehicles);
-          await new Promise((r) => setTimeout(r, 1e3));
         }
         this.updateVehicles(data.vehicles);
-        document.getElementById("info")?.classList.remove("is-loading");
+        document.getElementById("loading")?.classList.add("hidden");
       } catch (err) {
         console.error("Fetch error", err);
       }
@@ -21078,39 +21117,11 @@ ${n2.shaderPreludeCode.vertexSource}`, define: n2.shaderDefine }, defaultProject
       el.addEventListener("click", async (e) => {
         e.stopPropagation();
         if (this.selectedVehicle) {
-          this.showAllMarkers();
-        } else {
-          this.hideSomeMarkers(vehicle.headsign, vehicle.route_short_name);
-          this.selectedVehicle = vehicle;
-          try {
-            const res = await fetch(api + "/visualVehicle", {
-              method: "POST",
-              headers: { "Content-Type": "application/json" },
-              body: JSON.stringify({ trip_id: vehicle.trip_id })
-            });
-            if (!res.ok) {
-              let errorText;
-              try {
-                errorText = await res.text();
-              } catch (textError) {
-                errorText = "Could not read error response";
-              }
-              console.error("HTTP Error:", {
-                status: res.status,
-                statusText: res.statusText,
-                url: res.url,
-                headers: Object.fromEntries(res.headers.entries()),
-                body: errorText
-              });
-              throw new Error(`HTTP ${res.status}: ${res.status}`);
-            }
-            const data = await res.json();
-            this.selectedSchedule = data;
-            this.updateScheduleDisplay(markerData.bearing);
-            this.drawRouteShape(vehicle.route_color, data.shape);
-          } catch (err) {
-            console.error("Fetch shape error", err);
+          if (!this.isAutoPlaying) {
+            this.showAllMarkers();
           }
+        } else {
+          this.selectVehicle(vehicle);
         }
       });
       this.markers[this.key(vehicle)] = markerData;
@@ -21127,6 +21138,11 @@ ${n2.shaderPreludeCode.vertexSource}`, define: n2.shaderDefine }, defaultProject
           if (elem) {
             elem.style.display = "none";
           }
+        } else {
+          const elem = data.marker.getElement();
+          if (elem) {
+            elem.style.display = "";
+          }
         }
       });
     }
@@ -21137,6 +21153,9 @@ ${n2.shaderPreludeCode.vertexSource}`, define: n2.shaderDefine }, defaultProject
           elem.style.display = "";
         }
       });
+      this.clearSelectedVehicle();
+    }
+    clearSelectedVehicle() {
       this.selectedVehicle = void 0;
       this.selectedSchedule = void 0;
       this.updateScheduleDisplay();
@@ -21175,6 +21194,35 @@ ${n2.shaderPreludeCode.vertexSource}`, define: n2.shaderDefine }, defaultProject
         }
       });
       this.addArrowsToRoute(route_color, shape);
+      this.fitMapToRoute(coordinates);
+    }
+    fitMapToRoute(coordinates) {
+      if (coordinates.length === 0) return;
+      const lngs = coordinates.map((coord) => coord[0]);
+      const lats = coordinates.map((coord) => coord[1]);
+      const bounds = [
+        Math.min(...lngs),
+        // west
+        Math.min(...lats),
+        // south  
+        Math.max(...lngs),
+        // east
+        Math.max(...lats)
+        // north
+      ];
+      const infoDiv = document.getElementById("info");
+      const infoHeight = infoDiv ? infoDiv.offsetHeight > 235 ? infoDiv.offsetHeight + 20 : 235 + 20 : 0;
+      const padding = window.innerWidth < 450 ? 50 : 200;
+      this.map.fitBounds(bounds, {
+        padding: {
+          top: Math.max(infoHeight, padding),
+          right: padding,
+          bottom: padding,
+          left: padding
+        },
+        duration: 2e3,
+        essential: true
+      });
     }
     addArrowsToRoute(route_color, shape) {
       let totalDistance = 0;
@@ -21240,6 +21288,129 @@ ${n2.shaderPreludeCode.vertexSource}`, define: n2.shaderDefine }, defaultProject
       }
       this.routeArrows.forEach((arrow) => arrow.remove());
       this.routeArrows = [];
+    }
+    setupAutoPlayControls() {
+      const autoPlayBtn = document.getElementById("auto-play");
+      const playStopBtn = document.getElementById("play-stop");
+      const playTime = document.getElementById("play-time");
+      const playNextBtn = document.getElementById("play-next");
+      autoPlayBtn?.addEventListener("click", () => {
+        this.startAutoPlay();
+      });
+      playStopBtn?.addEventListener("click", () => {
+        this.stopAutoPlay();
+      });
+      playTime?.addEventListener("click", () => {
+        this.autoPlayIndex = (this.autoPlayIndex + 1) % autoPlayDurations.length;
+        const currentDuration = autoPlayDurations[this.autoPlayIndex];
+        const playTimeSpan = document.querySelector("#play-time span");
+        if (playTimeSpan) {
+          playTimeSpan.textContent = currentDuration;
+        }
+        this.autoPlayDuration = durationToMs(currentDuration);
+      });
+      playNextBtn?.addEventListener("click", () => {
+        this.selectNextVehicle();
+      });
+    }
+    startAutoPlay() {
+      if (this.isAutoPlaying) return;
+      const availableVehicles = Object.values(this.markers).filter((markerData) => markerData.vehicle.location).map((markerData) => markerData.vehicle);
+      if (availableVehicles.length === 0) return;
+      this.isAutoPlaying = true;
+      this.updateAutoPlayUI();
+      this.selectRandomVehicle();
+    }
+    stopAutoPlay() {
+      this.isAutoPlaying = false;
+      this.clearAutoPlayTimer();
+      this.updateAutoPlayUI();
+      this.showAllMarkers();
+    }
+    selectNextVehicle() {
+      if (!this.isAutoPlaying) return;
+      this.clearAutoPlayTimer();
+      this.selectRandomVehicle();
+    }
+    selectRandomVehicle() {
+      const availableVehicles = Object.values(this.markers).filter((markerData) => markerData.vehicle.location).map((markerData) => markerData.vehicle);
+      if (availableVehicles.length === 0) return;
+      let randomVehicle;
+      do {
+        randomVehicle = availableVehicles[Math.floor(Math.random() * availableVehicles.length)];
+      } while (this.selectedVehicle && randomVehicle.route_short_name === this.selectedVehicle.route_short_name && availableVehicles.length > 1);
+      this.selectVehicle(randomVehicle);
+      this.startAutoPlayTimer();
+    }
+    startAutoPlayTimer() {
+      this.clearAutoPlayTimer();
+      this.autoPlayTimer = window.setTimeout(() => {
+        if (this.isAutoPlaying) {
+          this.selectRandomVehicle();
+        }
+      }, this.autoPlayDuration);
+    }
+    clearAutoPlayTimer() {
+      if (this.autoPlayTimer !== null) {
+        clearTimeout(this.autoPlayTimer);
+        this.autoPlayTimer = null;
+      }
+    }
+    updateAutoPlayUI() {
+      const autoPlayBtn = document.getElementById("auto-play");
+      const playStopBtn = document.getElementById("play-stop");
+      const playTime = document.getElementById("play-time");
+      const playNextBtn = document.getElementById("play-next");
+      if (this.isAutoPlaying) {
+        autoPlayBtn?.classList.add("hidden");
+        playStopBtn?.classList.remove("hidden");
+        playTime?.classList.remove("hidden");
+        playNextBtn?.classList.remove("hidden");
+      } else {
+        autoPlayBtn?.classList.remove("hidden");
+        playStopBtn?.classList.add("hidden");
+        playTime?.classList.add("hidden");
+        playNextBtn?.classList.add("hidden");
+      }
+    }
+    // Extracted vehicle selection logic to be reusable
+    async selectVehicle(vehicle) {
+      if (this.selectedVehicle && !this.isAutoPlaying) {
+        this.showAllMarkers();
+        return;
+      }
+      try {
+        const res = await fetch(api + "/visualVehicle", {
+          method: "POST",
+          headers: { "Content-Type": "application/json", "use-dev-mode": this.useDevMode ? "hi" : "" },
+          body: JSON.stringify({ trip_id: vehicle.trip_id })
+        });
+        if (!res.ok) {
+          let errorText;
+          try {
+            errorText = await res.text();
+          } catch (textError) {
+            errorText = "Could not read error response";
+          }
+          console.error("HTTP Error:", {
+            status: res.status,
+            statusText: res.statusText,
+            url: res.url,
+            headers: Object.fromEntries(res.headers.entries()),
+            body: errorText
+          });
+          throw new Error(`HTTP ${res.status}: ${res.statusText}`);
+        }
+        const data = await res.json();
+        this.selectedSchedule = data;
+        this.drawRouteShape(vehicle.route_color, data.shape);
+      } catch (err) {
+        console.error("Fetch shape error", err);
+      }
+      this.hideSomeMarkers(vehicle.headsign, vehicle.route_short_name);
+      this.selectedVehicle = vehicle;
+      const markerData = this.markers[this.key(vehicle)];
+      this.updateScheduleDisplay(markerData?.bearing);
     }
   };
   document.addEventListener("DOMContentLoaded", () => {

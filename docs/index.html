@@ -70,13 +70,11 @@
       font-style: normal;
     }
 
-    #info {
+    #panel {
       position: fixed;
       top: 0px;
       left: 0px;
       margin: 20px;
-      border-radius: 10px;
-      padding: 16px;
       z-index: 1000;
       width: calc(100% - 40px);
       max-width: 450px;
@@ -85,6 +83,15 @@
       flex-direction: column;
       gap: .5em;
       box-sizing: border-box;
+    }
+
+    #info {
+      display: flex;
+      flex-direction: column;
+      gap: .5em;
+      box-sizing: border-box;
+      border-radius: 10px;
+      padding: 16px;
     }
 
     #info.is-loading {
@@ -267,24 +274,114 @@
     #app .info .title {
       font-size: 16px;
     }
+
+    #loading {
+      background: rgba(255, 255, 255, 0.95);
+      border-radius: 10px;
+      position: fixed;
+      top: 66.67%;
+      left: 50%;
+      transform: translate(-50%, -50%);
+      z-index: 1000;
+    }
+
+    #loading .text {
+      font-size: 12px;
+      text-align: center;
+      margin-top: -30px;
+      height: 15px;
+      margin-bottom: 15px;
+    }
+
+    .hidden {
+      display: none !important;
+    }
+
+    .blink {
+      animation: blinker 1s linear infinite;
+    }
+
+    @keyframes blinker {
+      50% {
+        opacity: 0;
+      }
+    }
+
+    #control {
+      display: flex;
+      flex-direction: row;
+      gap: 5px;
+    }
+
+    .button {
+      display: flex;
+      align-items: center;
+      flex-direction: row;
+      gap: 5px;
+      border-radius: 10px;
+      background: rgba(255, 255, 255, 0.95);
+      font-size: 12px;
+      padding: 5px;
+      padding-left: 7.5px;
+      padding-right: 7.5px;
+      width: fit-content;
+      cursor: pointer;
+    }
+
+    .spinning {
+      animation: spin 1s linear infinite;
+    }
+
+    @keyframes spin {
+      from {
+        transform: rotate(0deg);
+      }
+
+      to {
+        transform: rotate(360deg);
+      }
+    }
   </style>
 </head>
 
 <body>
   <div id="map"></div>
-  <div id="info" class="is-loading">
-    <div class="head">
-      <div class="header">Realtime Transit</div>
-      <div class="sub-header">See transit move in realtime</div>
+  <div id="loading" class="">
+    <!-- <canvas id="dotlottie-canvas" style="width: 100px; height: 100px; "></canvas> -->
+    <video autoplay loop muted playsinline style="width: 100px; height: 100px; ">
+      <source src="train.webm" type="video/webm">
+    </video>
+    <div class="text">Loading...</div>
+  </div>
+  <div id="panel">
+    <div id="info">
+      <div class="head">
+        <div class="header">Realtime Transit</div>
+        <div class="sub-header">See transit move in realtime</div>
+      </div>
+      <div class="options">
+        <a href="#BAYAREA">Bay Area</a>
+        <a href="#NYC">NYC</a>
+        <a href="#SF">SF</a>
+      </div>
+      <div class="more">
+        <div id="schedule-content"></div>
+        <div id="details">Click on a vehicle to view route information. All data is from respective agencies. Not all vehicles have location data (i.e. BART).</div>
+      </div>
     </div>
-    <div class="options">
-      <a href="#BAYAREA">Bay Area</a>
-      <a href="#NYC">NYC</a>
-      <a href="#SF">SF</a>
-    </div>
-    <div class="more">
-      <div id="schedule-content"></div>
-      <div id="details">Click on a vehicle to view route information. All data is from respective agencies. Not all vehicles have location data (i.e. BART).</div>
+    <div id="control">
+      <div id="auto-play" class="button">
+        <ion-icon name="play"></ion-icon><span>auto cycle through transit lines</span>
+      </div>
+      <div id="play-stop" class="button hidden">
+        <ion-icon name="stop"></ion-icon><span>stop cycling</span>
+      </div>
+      <div id="play-time" class="button hidden">
+        <span>10s</span>
+      </div>
+      <div id="play-next" class="button hidden">
+        <ion-icon name="play-forward"></ion-icon><span>next</span>
+      </div>
     </div>
   </div>
   <div id="app">

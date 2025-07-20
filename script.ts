@@ -126,6 +126,15 @@ const USA: place = {
 };
 
 const defaultPlace = SF
+const autoPlayDurations = ["10s", "1m", "10m"]
+function durationToMs(duration) {
+    if (duration.endsWith('s')) {
+        return parseInt(duration) * 1000;
+    } else if (duration.endsWith('m')) {
+        return parseInt(duration) * 60 * 1000;
+    }
+    return 0;
+}
 
 class MapApplication {
     private markers: Record<string, MarkerData> = {};
@@ -135,10 +144,17 @@ class MapApplication {
     private routeArrows: maplibregl.Marker[] = [];
 
     private place: place = USA;
+    private useDevMode: boolean | undefined = undefined;
     private map: maplibregl.Map;
 
     private userActive: boolean = true;
     private lastUpdatedAt: Date | undefined = undefined;
+
+    // Auto-play functionality
+    private isAutoPlaying: boolean = false;
+    private autoPlayTimer: number | null = null;
+    private autoPlayIndex = 0
+    private autoPlayDuration = 10 * 1000;
 
     constructor(mapElementId: string) {
         // Setup the map
@@ -175,12 +191,24 @@ class MapApplication {
 
         // Set up map reset (not clear)
         this.map.on('click', (e) => {
-            this.showAllMarkers();
+            if (!this.isAutoPlaying) {
+                this.showAllMarkers();
+            }
         });
 
         document.addEventListener('keydown', (e) => {
             if (e.key === 'Escape') {
+                this.stopAutoPlay();
                 this.showAllMarkers();
+            }
+            if (e.key === 'd') {
+                console.log("dev mode is on")
+                this.useDevMode = true
+            }
+            if (e.key === 'ArrowRight' || e.key === ' ') {
+                if (this.isAutoPlaying) {
+                    this.selectNextVehicle();
+                }
             }
         });
 
@@ -206,6 +234,11 @@ class MapApplication {
 
         // Wait for map to load before fetching data
         this.map.on('load', () => {
+            const devMode = window.location.search.includes("?dev")
+            if (devMode) {
+                console.log("dev mode is on")
+                this.useDevMode = true
+            }
             if (this.place == USA) {
                 window.location.hash = '#' + defaultPlace.name;
             } else {
@@ -213,6 +246,9 @@ class MapApplication {
             }
             setInterval(() => this.fetchAndUpdate(false), 60000);
         });
+
+        // Setup auto-play controls
+        this.setupAutoPlayControls();
     }
 
     // Calculate bearing between two points in degrees
@@ -265,24 +301,31 @@ class MapApplication {
     }
 
     private setPlace(): boolean {
+        let found = false
         switch (window.location.hash) {
             case "#SF":
                 this.map.fitBounds(SF.bounds, { duration: 2500, essential: true });
                 this.place = SF;
-                this.fetchAndUpdate(true);
-                return true;
+                found = true
+                break;
             case "#BAYAREA":
                 this.map.fitBounds(BAYAREA.bounds, { duration: 2500, essential: true });
                 this.place = BAYAREA;
                 this.fetchAndUpdate(true);
-                return true;
+                found = true
+                break;
             case "#NYC":
                 this.map.fitBounds(NYC.bounds, { duration: 2500, essential: true });
                 this.place = NYC;
                 this.fetchAndUpdate(true);
-                return true;
+                found = true
+                break;
         }
-        return false;
+        this.stopAutoPlay();
+        this.clearSelectedVehicle();
+        this.clearMarkers();
+        this.fetchAndUpdate(true);
+        return found;
     }
 
     private async fetchAndUpdate(replaceAndFetchOld: boolean): Promise<void> {
@@ -291,14 +334,15 @@ class MapApplication {
         }
 
         if (replaceAndFetchOld) {
-            document.getElementById("info")?.classList.add("is-loading");
+            // document.getElementById("info")?.classList.add("is-loading");
+            document.getElementById("loading")?.classList.remove("hidden");
         }
 
         try {
             // Hi! Don't be scraping please, use 511.org's data directly. It's free!
             const res = await fetch(api + '/visualMap', {
                 method: 'POST',
-                headers: { 'Content-Type': 'application/json' },
+                headers: { 'Content-Type': 'application/json', 'use-dev-mode': this.useDevMode ? "hi" : "" },
                 body: JSON.stringify({ place: this.place.name, include_old: replaceAndFetchOld })
             });
 
@@ -328,10 +372,10 @@ class MapApplication {
             }
             if (replaceAndFetchOld) {
                 this.updateVehicles(data.old_vehicles);
-                await new Promise(r => setTimeout(r, 1000)); // pause so the old location settles
             }
             this.updateVehicles(data.vehicles);
-            document.getElementById("info")?.classList.remove("is-loading");
+            // document.getElementById("info")?.classList.remove("is-loading");
+            document.getElementById("loading")?.classList.add("hidden");
         } catch (err) {
             console.error('Fetch error', err);
         }
@@ -457,45 +501,11 @@ class MapApplication {
         el.addEventListener('click', async (e) => {
             e.stopPropagation();
             if (this.selectedVehicle) {
-                this.showAllMarkers();
-            } else {
-                this.hideSomeMarkers(vehicle.headsign, vehicle.route_short_name);
-                this.selectedVehicle = vehicle;
-                try {
-                    // Hi! Don't be scraping please, use 511.org's data directly. It's free!
-                    const res = await fetch(api + '/visualVehicle', {
-                        method: 'POST',
-                        headers: { 'Content-Type': 'application/json' },
-                        body: JSON.stringify({ trip_id: vehicle.trip_id })
-                    });
-
-                    if (!res.ok) {
-                        // Try to get the error response body
-                        let errorText;
-                        try {
-                            errorText = await res.text();
-                        } catch (textError) {
-                            errorText = 'Could not read error response';
-                        }
-
-                        console.error('HTTP Error:', {
-                            status: res.status,
-                            statusText: res.statusText,
-                            url: res.url,
-                            headers: Object.fromEntries(res.headers.entries()),
-                            body: errorText
-                        });
-
-                        throw new Error(`HTTP ${res.status}: ${res.status}`);
-                    }
-
-                    const data: VisualVehicleResponse = await res.json();
-                    this.selectedSchedule = data;
-                    this.updateScheduleDisplay(markerData.bearing);
-                    this.drawRouteShape(vehicle.route_color, data.shape);
-                } catch (err) {
-                    console.error('Fetch shape error', err);
+                if (!this.isAutoPlaying) {
+                    this.showAllMarkers();
                 }
+            } else {
+                this.selectVehicle(vehicle)
             }
         });
 
@@ -516,6 +526,11 @@ class MapApplication {
                 if (elem) {
                     elem.style.display = 'none';
                 }
+            } else {
+                const elem = data.marker.getElement();
+                if (elem) {
+                    elem.style.display = '';
+                }
             }
         });
     }
@@ -527,6 +542,10 @@ class MapApplication {
                 elem.style.display = '';
             }
         });
+        this.clearSelectedVehicle();
+    }
+
+    private clearSelectedVehicle(): void {
         this.selectedVehicle = undefined;
         this.selectedSchedule = undefined;
         this.updateScheduleDisplay();
@@ -577,6 +596,42 @@ class MapApplication {
 
         // Add arrows along the route
         this.addArrowsToRoute(route_color, shape);
+
+        // Fit the map to the route bounds
+        this.fitMapToRoute(coordinates);
+    }
+
+    private fitMapToRoute(coordinates: number[][]): void {
+        if (coordinates.length === 0) return;
+
+        // Calculate bounds from coordinates
+        const lngs = coordinates.map(coord => coord[0]);
+        const lats = coordinates.map(coord => coord[1]);
+
+        const bounds: [number, number, number, number] = [
+            Math.min(...lngs), // west
+            Math.min(...lats), // south  
+            Math.max(...lngs), // east
+            Math.max(...lats)  // north
+        ];
+
+        // Get the info div dimensions
+        const infoDiv = document.getElementById('info');
+        // const infoHeight = infoDiv && window.innerWidth < 450 ? infoDiv.offsetHeight + 60 : 0; // if small window, ensure the info box doesn't cover route
+        const infoHeight = infoDiv ? infoDiv.offsetHeight > 235 ? infoDiv.offsetHeight + 20 : 235 + 20 : 0;
+        const padding = window.innerWidth < 450 ? 50 : 200
+
+        // Fit the map to the route with padding that accounts for the floating div
+        this.map.fitBounds(bounds, {
+            padding: {
+                top: Math.max(infoHeight, padding),
+                right: padding,
+                bottom: padding,
+                left: padding,
+            },
+            duration: 2000,
+            essential: true
+        });
     }
 
     private addArrowsToRoute(route_color: string, shape: Array<{ lat: number; lng: number }>): void {
@@ -662,6 +717,170 @@ class MapApplication {
         // Clear route arrows
         this.routeArrows.forEach(arrow => arrow.remove());
         this.routeArrows = [];
+    }
+
+    private setupAutoPlayControls(): void {
+        const autoPlayBtn = document.getElementById('auto-play');
+        const playStopBtn = document.getElementById('play-stop');
+        const playTime = document.getElementById('play-time');
+        const playNextBtn = document.getElementById('play-next');
+
+        autoPlayBtn?.addEventListener('click', () => {
+            this.startAutoPlay();
+        });
+
+        playStopBtn?.addEventListener('click', () => {
+            this.stopAutoPlay();
+        });
+
+        playTime?.addEventListener('click', () => {
+            // Cycle to next index
+            this.autoPlayIndex = (this.autoPlayIndex + 1) % autoPlayDurations.length;
+
+            // Get the current duration string
+            const currentDuration = autoPlayDurations[this.autoPlayIndex];
+
+            // Update the display text
+            const playTimeSpan = document.querySelector('#play-time span');
+            if (playTimeSpan) {
+                playTimeSpan.textContent = currentDuration;
+            }
+
+            // Update the autoPlayDuration in milliseconds
+            this.autoPlayDuration = durationToMs(currentDuration);
+        });
+
+        playNextBtn?.addEventListener('click', () => {
+            this.selectNextVehicle();
+        });
+    }
+
+    private startAutoPlay(): void {
+        if (this.isAutoPlaying) return;
+        const availableVehicles = Object.values(this.markers)
+            .filter(markerData => markerData.vehicle.location)
+            .map(markerData => markerData.vehicle);
+
+        if (availableVehicles.length === 0) return;
+
+        this.isAutoPlaying = true;
+        this.updateAutoPlayUI();
+        this.selectRandomVehicle();
+    }
+
+    private stopAutoPlay(): void {
+        this.isAutoPlaying = false;
+        this.clearAutoPlayTimer();
+        this.updateAutoPlayUI();
+        this.showAllMarkers();
+    }
+
+    private selectNextVehicle(): void {
+        if (!this.isAutoPlaying) return;
+
+        this.clearAutoPlayTimer();
+        this.selectRandomVehicle();
+    }
+
+    private selectRandomVehicle(): void {
+        const availableVehicles = Object.values(this.markers)
+            .filter(markerData => markerData.vehicle.location)
+            .map(markerData => markerData.vehicle);
+
+        if (availableVehicles.length === 0) return;
+
+        // Get a random vehicle different from the currently selected one
+        let randomVehicle: Vehicle;
+        do {
+            randomVehicle = availableVehicles[Math.floor(Math.random() * availableVehicles.length)];
+        } while (this.selectedVehicle && randomVehicle.route_short_name === this.selectedVehicle.route_short_name && availableVehicles.length > 1);
+
+        // Simulate clicking on the vehicle
+        this.selectVehicle(randomVehicle);
+
+        // Start timer for next vehicle selection
+        this.startAutoPlayTimer();
+    }
+
+    private startAutoPlayTimer(): void {
+        this.clearAutoPlayTimer();
+        this.autoPlayTimer = window.setTimeout(() => {
+            if (this.isAutoPlaying) {
+                this.selectRandomVehicle();
+            }
+        }, this.autoPlayDuration);
+    }
+
+    private clearAutoPlayTimer(): void {
+        if (this.autoPlayTimer !== null) {
+            clearTimeout(this.autoPlayTimer);
+            this.autoPlayTimer = null;
+        }
+    }
+
+    private updateAutoPlayUI(): void {
+        const autoPlayBtn = document.getElementById('auto-play');
+        const playStopBtn = document.getElementById('play-stop');
+        const playTime = document.getElementById('play-time');
+        const playNextBtn = document.getElementById('play-next');
+
+        if (this.isAutoPlaying) {
+            autoPlayBtn?.classList.add('hidden');
+            playStopBtn?.classList.remove('hidden');
+            playTime?.classList.remove('hidden');
+            playNextBtn?.classList.remove('hidden');
+        } else {
+            autoPlayBtn?.classList.remove('hidden');
+            playStopBtn?.classList.add('hidden');
+            playTime?.classList.add('hidden');
+            playNextBtn?.classList.add('hidden');
+        }
+    }
+
+    // Extracted vehicle selection logic to be reusable
+    private async selectVehicle(vehicle: Vehicle): Promise<void> {
+        if (this.selectedVehicle && !this.isAutoPlaying) {
+            this.showAllMarkers();
+            return;
+        }
+
+        try {
+            const res = await fetch(api + '/visualVehicle', {
+                method: 'POST',
+                headers: { 'Content-Type': 'application/json', 'use-dev-mode': this.useDevMode ? "hi" : "" },
+                body: JSON.stringify({ trip_id: vehicle.trip_id })
+            });
+
+            if (!res.ok) {
+                let errorText;
+                try {
+                    errorText = await res.text();
+                } catch (textError) {
+                    errorText = 'Could not read error response';
+                }
+
+                console.error('HTTP Error:', {
+                    status: res.status,
+                    statusText: res.statusText,
+                    url: res.url,
+                    headers: Object.fromEntries(res.headers.entries()),
+                    body: errorText
+                });
+
+                throw new Error(`HTTP ${res.status}: ${res.statusText}`);
+            }
+
+            const data: VisualVehicleResponse = await res.json();
+            this.selectedSchedule = data;
+            this.drawRouteShape(vehicle.route_color, data.shape);
+        } catch (err) {
+            console.error('Fetch shape error', err);
+        }
+
+        this.hideSomeMarkers(vehicle.headsign, vehicle.route_short_name);
+        this.selectedVehicle = vehicle;
+        const markerData = this.markers[this.key(vehicle)];
+        this.updateScheduleDisplay(markerData?.bearing);
     }
 }
 
