@@ -20760,14 +20760,16 @@ ${n2.shaderPreludeCode.vertexSource}`, define: n2.shaderDefine }, defaultProject
     startLngLat = [0, 0];
     endLngLat = [0, 0];
     duration = 6e4;
-    // 60 seconds
     marker;
     animationId = null;
     isAnimating = false;
+    isDestroyed = false;
+    // Add this to prevent animations after cleanup
     constructor(marker) {
       this.marker = marker;
     }
     slideTo(lngLat, duration = 6e4) {
+      if (this.isDestroyed) return;
       if (this.animationId) {
         cancelAnimationFrame(this.animationId);
       }
@@ -20779,14 +20781,14 @@ ${n2.shaderPreludeCode.vertexSource}`, define: n2.shaderDefine }, defaultProject
       this.animate();
     }
     animate = () => {
-      if (!this.isAnimating) return;
+      if (!this.isAnimating || this.isDestroyed) return;
       const elapsed = Date.now() - this.startTime;
       const progress = Math.min(elapsed / this.duration, 1);
       const easeProgress = progress < 0.5 ? 2 * progress * progress : 1 - Math.pow(-2 * progress + 2, 3) / 2;
       const currentLng = this.startLngLat[0] + (this.endLngLat[0] - this.startLngLat[0]) * easeProgress;
       const currentLat = this.startLngLat[1] + (this.endLngLat[1] - this.startLngLat[1]) * easeProgress;
       this.marker.setLngLat([currentLng, currentLat]);
-      if (progress < 1) {
+      if (progress < 1 && !this.isDestroyed) {
         this.animationId = requestAnimationFrame(this.animate);
       } else {
         this.isAnimating = false;
@@ -20799,6 +20801,7 @@ ${n2.shaderPreludeCode.vertexSource}`, define: n2.shaderDefine }, defaultProject
         this.animationId = null;
       }
       this.isAnimating = false;
+      this.isDestroyed = true;
     }
   };
   var SF = {
@@ -20828,6 +20831,7 @@ ${n2.shaderPreludeCode.vertexSource}`, define: n2.shaderDefine }, defaultProject
     }
     return 0;
   }
+  var periodicCleanupInterval = 10 * 60 * 1e3;
   var MapApplication = class {
     markers = {};
     selectedVehicle = void 0;
@@ -20839,6 +20843,7 @@ ${n2.shaderPreludeCode.vertexSource}`, define: n2.shaderDefine }, defaultProject
     map;
     userActive = true;
     lastUpdatedAt = void 0;
+    cleanupCounter = 0;
     // Auto-play functionality
     isAutoPlaying = false;
     autoPlayTimer = null;
@@ -20924,6 +20929,9 @@ ${n2.shaderPreludeCode.vertexSource}`, define: n2.shaderDefine }, defaultProject
         setInterval(() => this.fetchAndUpdate(false), 6e4);
       });
       this.setupAutoPlayControls();
+      setInterval(() => {
+        this.performPeriodicCleanup();
+      }, periodicCleanupInterval);
     }
     // Calculate bearing between two points in degrees
     calculateBearing(from, to) {
@@ -21415,6 +21423,22 @@ ${n2.shaderPreludeCode.vertexSource}`, define: n2.shaderDefine }, defaultProject
       const markerData = this.markers[this.key(vehicle)];
       this.updateScheduleDisplay(markerData?.bearing);
     }
+    performPeriodicCleanup() {
+      this.cleanupCounter++;
+      if (this.cleanupCounter % 3 === 0) {
+        console.log("Performing aggressive cleanup...");
+        const currentVehicles = Object.values(this.markers).map((m) => m.vehicle);
+        this.clearMarkers();
+        if (window.gc) {
+          window.gc();
+        }
+        currentVehicles.forEach((vehicle) => {
+          if (vehicle.location) {
+            this.createMarker(vehicle, [vehicle.location.lng, vehicle.location.lat]);
+          }
+        });
+      }
+    }
   };
   document.addEventListener("DOMContentLoaded", () => {
     const app = new MapApplication("map");
@@ -21449,15 +21473,37 @@ ${n2.shaderPreludeCode.vertexSource}`, define: n2.shaderDefine }, defaultProject
   });
   document.addEventListener("DOMContentLoaded", async () => {
     let wakeLock = void 0;
-    wakeLock = await navigator.wakeLock.request("screen");
+    const requestWakeLock = async () => {
+      try {
+        if (wakeLock) {
+          await wakeLock.release();
+          wakeLock = void 0;
+        }
+        wakeLock = await navigator.wakeLock.request("screen");
+      } catch (error) {
+        console.warn("Wake lock request failed:", error);
+      }
+    };
+    const releaseWakeLock = async () => {
+      try {
+        if (wakeLock) {
+          await wakeLock.release();
+          wakeLock = void 0;
+        }
+      } catch (error) {
+        console.warn("Wake lock release failed:", error);
+      }
+    };
+    await requestWakeLock();
     document.addEventListener("visibilitychange", async () => {
       if (document.visibilityState === "visible") {
-        wakeLock = await navigator.wakeLock.request("screen");
+        await requestWakeLock();
+      } else {
+        await releaseWakeLock();
       }
-      if (wakeLock && document.visibilityState === "hidden") {
-        await wakeLock.release();
-        wakeLock = void 0;
-      }
+    });
+    window.addEventListener("beforeunload", async () => {
+      await releaseWakeLock();
     });
   });
 })();

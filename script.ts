@@ -42,16 +42,19 @@ class MarkerAnimator {
     private startTime: number = 0;
     private startLngLat: [number, number] = [0, 0];
     private endLngLat: [number, number] = [0, 0];
-    private duration: number = 60000; // 60 seconds
+    private duration: number = 60000;
     private marker: maplibregl.Marker;
     private animationId: number | null = null;
     private isAnimating: boolean = false;
+    private isDestroyed: boolean = false; // Add this to prevent animations after cleanup
 
     constructor(marker: maplibregl.Marker) {
         this.marker = marker;
     }
 
     slideTo(lngLat: [number, number], duration: number = 60000): void {
+        if (this.isDestroyed) return; // Don't start new animations if destroyed
+
         if (this.animationId) {
             cancelAnimationFrame(this.animationId);
         }
@@ -66,12 +69,11 @@ class MarkerAnimator {
     }
 
     private animate = (): void => {
-        if (!this.isAnimating) return;
+        if (!this.isAnimating || this.isDestroyed) return;
 
         const elapsed = Date.now() - this.startTime;
         const progress = Math.min(elapsed / this.duration, 1);
 
-        // Easing function for smooth animation
         const easeProgress = progress < 0.5
             ? 2 * progress * progress
             : 1 - Math.pow(-2 * progress + 2, 3) / 2;
@@ -81,7 +83,7 @@ class MarkerAnimator {
 
         this.marker.setLngLat([currentLng, currentLat]);
 
-        if (progress < 1) {
+        if (progress < 1 && !this.isDestroyed) {
             this.animationId = requestAnimationFrame(this.animate);
         } else {
             this.isAnimating = false;
@@ -95,6 +97,7 @@ class MarkerAnimator {
             this.animationId = null;
         }
         this.isAnimating = false;
+        this.isDestroyed = true; // Mark as destroyed when stopped
     }
 }
 
@@ -136,6 +139,8 @@ function durationToMs(duration) {
     return 0;
 }
 
+const periodicCleanupInterval = 10 * 60 * 1000
+
 class MapApplication {
     private markers: Record<string, MarkerData> = {};
     private selectedVehicle: Vehicle | undefined = undefined;
@@ -149,6 +154,7 @@ class MapApplication {
 
     private userActive: boolean = true;
     private lastUpdatedAt: Date | undefined = undefined;
+    private cleanupCounter: number = 0;
 
     // Auto-play functionality
     private isAutoPlaying: boolean = false;
@@ -249,6 +255,11 @@ class MapApplication {
 
         // Setup auto-play controls
         this.setupAutoPlayControls();
+
+        // Add periodic cleanup every 10 minutes
+        setInterval(() => {
+            this.performPeriodicCleanup();
+        }, periodicCleanupInterval);
     }
 
     // Calculate bearing between two points in degrees
@@ -383,8 +394,8 @@ class MapApplication {
 
     private clearMarkers(): void {
         Object.values(this.markers).forEach(markerData => {
-            markerData.marker.remove();
-            markerData.animator.stop();
+            markerData.marker.remove();  // This properly removes from map AND DOM
+            markerData.animator.stop();  // Stop animations
         });
         this.markers = {};
     }
@@ -714,10 +725,11 @@ class MapApplication {
             this.routeLayerId = null;
         }
 
-        // Clear route arrows
+        // Clear route arrows properly
         this.routeArrows.forEach(arrow => arrow.remove());
         this.routeArrows = [];
     }
+
 
     private setupAutoPlayControls(): void {
         const autoPlayBtn = document.getElementById('auto-play');
@@ -886,6 +898,31 @@ class MapApplication {
         const markerData = this.markers[this.key(vehicle)];
         this.updateScheduleDisplay(markerData?.bearing);
     }
+
+    private performPeriodicCleanup(): void {
+        this.cleanupCounter++;
+
+        // Every 30 minutes, force a more aggressive cleanup
+        if (this.cleanupCounter % 3 === 0) {
+            console.log('Performing aggressive cleanup...');
+
+            // Clear and rebuild all markers to prevent gradual memory leaks
+            const currentVehicles = Object.values(this.markers).map(m => m.vehicle);
+            this.clearMarkers();
+
+            // Force garbage collection hint
+            if (window.gc) {
+                window.gc();
+            }
+
+            // Rebuild markers
+            currentVehicles.forEach(vehicle => {
+                if (vehicle.location) {
+                    this.createMarker(vehicle, [vehicle.location.lng, vehicle.location.lat]);
+                }
+            });
+        }
+    }
 }
 
 // Initialize the application when the DOM is loaded
@@ -935,15 +972,44 @@ document.addEventListener('DOMContentLoaded', () => {
 // Prevent screen from sleeping
 document.addEventListener('DOMContentLoaded', async () => {
     let wakeLock: WakeLockSentinel | undefined = undefined;
-    wakeLock = await navigator.wakeLock.request('screen');
+
+    const requestWakeLock = async () => {
+        try {
+            // Release existing wake lock first
+            if (wakeLock) {
+                await wakeLock.release();
+                wakeLock = undefined;
+            }
+            wakeLock = await navigator.wakeLock.request('screen');
+        } catch (error) {
+            console.warn('Wake lock request failed:', error);
+        }
+    };
+
+    const releaseWakeLock = async () => {
+        try {
+            if (wakeLock) {
+                await wakeLock.release();
+                wakeLock = undefined;
+            }
+        } catch (error) {
+            console.warn('Wake lock release failed:', error);
+        }
+    };
+
+    // Initial wake lock request
+    await requestWakeLock();
 
     document.addEventListener('visibilitychange', async () => {
         if (document.visibilityState === 'visible') {
-            wakeLock = await navigator.wakeLock.request('screen');
+            await requestWakeLock();
+        } else {
+            await releaseWakeLock();
         }
-        if (wakeLock && document.visibilityState === 'hidden') {
-            await wakeLock.release()
-            wakeLock = undefined
-        }
+    });
+
+    // Clean up on page unload
+    window.addEventListener('beforeunload', async () => {
+        await releaseWakeLock();
     });
 });
