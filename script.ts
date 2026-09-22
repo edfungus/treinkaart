@@ -3,6 +3,10 @@ import maplibregl from 'maplibre-gl';
 
 const api = `${process.env.NODE_ENV == "production" ? "https://api.abetterride.app/tk" : "http://192.168.1.90:3000/tk"}`
 
+// CARTO basemap key. Restricted to the published domain, so it ships in the
+// client bundle by design.
+const CARTO_KEY = 'cb1_2ovv_1_e9745746aa9ca49d7497e7d0';
+
 // Types for the vehicle data
 interface Vehicle {
     vehicle_id: string;
@@ -171,12 +175,9 @@ class MapApplication {
                 sources: {
                     'carto-light': {
                         type: 'raster',
-                        tiles: [
-                            'https://a.basemaps.cartocdn.com/light_all/{z}/{x}/{y}.png',
-                            'https://b.basemaps.cartocdn.com/light_all/{z}/{x}/{y}.png',
-                            'https://c.basemaps.cartocdn.com/light_all/{z}/{x}/{y}.png',
-                            'https://d.basemaps.cartocdn.com/light_all/{z}/{x}/{y}.png'
-                        ],
+                        tiles: ['a', 'b', 'c', 'd'].map(
+                            (sub) => `https://${sub}.basemaps.cartocdn.com/light_all/{z}/{x}/{y}.png?key=${CARTO_KEY}`
+                        ),
                         tileSize: 256,
                         attribution: '&copy; <a href="https://www.openstreetmap.org/copyright">OpenStreetMap</a> contributors &copy; <a href="https://carto.com/attributions">CARTO</a> Data provided by <a href="https://511.org/">511.org</a> and <a href="https://www.mta.info/">MTA</a>'
                     }
